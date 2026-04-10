@@ -233,29 +233,7 @@ void AES_Encrypt_logexp( word8 P[16], word8 K[16] )
 
 void initialize_log_exp_tables()
 {
-    word8 g = 3;
-    exp_table[0] = 1;
-
-    for ( int i = 1; i < 512; i++ )
-        exp_table[i] = mul( g, exp_table[i-1] ); 
-
-    log_table[0] = 0;
-
-    for ( int i = 1; i < 256; i++ )
-    {
-        for ( int j = 0; j < 255; j++ ) 
-            if ( exp_table[ j ] == i )
-                log_table[i] = j;
-    }
-
-    /*
-    for ( int i = 0; i < 256; i++ )
-        cout << exp_table[i] << '\t';
-    cout << endl;
-    for ( int i = 0; i < 256; i++ )
-        cout << log_table[i] << '\t';
-    cout << endl;
-    */
+    ;
 }
 
 void AES_Encrypt_NI( word8 P[16], word8 RK[ROUND+1][16], word8 C[16] )
