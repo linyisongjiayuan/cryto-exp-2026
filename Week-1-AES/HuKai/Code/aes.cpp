@@ -1,5 +1,8 @@
 #include<iostream>
 #include<iomanip>
+#include<iostream>
+#include<wmmintrin.h>
+#include<cstring>
 #include"aes.h"
 
 using namespace std;
@@ -7,17 +10,6 @@ using namespace std;
 word8 log_table[256];
 word8 exp_table[512];
 
-inline void printA( word8 X[16] )
-{
-    cout << "{";
-    for ( int i = 0; i < 16; i++ )
-    {
-        if ( i < 15 )
-            cout << hex << "0x" << X[i] << ",";
-        else
-            cout << hex << "0x" << X[i] << "}";
-    }
-}
 
 word8 Sbox[256] = {
 	// 0     1     2     3     4     5     6     7     8     9     a     b     c     d     e     f
@@ -96,45 +88,19 @@ void ShiftRow( word8 X[16] )
 
 word8 xtime( word8 x )
 {
-    if ( x >> 7 & 1 )
-        return ( x << 1 ) ^ 0x1b;
-    else
-        return ( x << 1 );
+    return 0;
 }
 
 word8 mul( word8 x, word8 y )
 {
-    word8 X[8] = { x };
-    for ( int i = 1; i < 8; i++ )
-        X[i] = xtime( X[i-1] );
-    word8 res = 0;
-    for ( int i = 0; i < 8; i++ )
-        if ( y >> i & 1 )
-            res ^= X[i];
-    return res;
+    return 0;
 }
 
 
 word8 mul2( word8 x, word8 y ) 
 {
-    return exp_table[ log_table[x] + log_table[y] ]; 
-    //return 0;
+    return 0;
 }
-
-word8 mul_by_2( word8 x ) 
-{
-    return xtime( x );
-
-    //return 0;
-}
-
-word8 mul_by_3( word8 x ) 
-{
-    return xtime( x ) ^ x;
-
-    //return 0;
-}
-
 
 void MixColumn( word8 X[16] )
 {
@@ -254,7 +220,7 @@ void AES_Encrypt_logexp( word8 P[16], word8 K[16] )
 
         ShiftRow( P );
 
-        MixColumn_simple( P );
+        MixColumn_logexp( P );
 
         AddRoundKey( P, RK[r+1] );
     }
@@ -282,11 +248,43 @@ void initialize_log_exp_tables()
                 log_table[i] = j;
     }
 
+    /*
     for ( int i = 0; i < 256; i++ )
         cout << exp_table[i] << '\t';
     cout << endl;
     for ( int i = 0; i < 256; i++ )
         cout << log_table[i] << '\t';
     cout << endl;
+    */
+}
+
+void AES_Encrypt_NI( word8 P[16], word8 RK[ROUND+1][16], word8 C[16] )
+{
+    __m128i x; // 数据块 (State)
+    __m128i rk[ROUND + 1]; // 轮密钥 (Round Keys)
+                           //
+    for ( int i = 0; i < ROUND+1; i++ )
+        rk[i] = _mm_loadu_si128 ( (__m128i*) RK[i] ); 
+
+    // 1. 初始化：将输入明文 P 加载到 XMM 寄存器
+    x = _mm_loadu_si128((__m128i*)P);
+
+    // 3. 初始轮密钥加 (Whitening Key)
+    x = _mm_xor_si128(x, rk[0]);
+
+    // 4. 中间轮次 (AES-NI 将 SubBytes, ShiftRow, MixColumn 合并为一条指令)
+    // 范围是 1 到 ROUND-1
+    for ( int r = 1; r < ROUND; r++ )
+    {
+        // _mm_aesenc_si128 等同于：SubBytes -> ShiftRows -> MixColumns -> AddRoundKey
+        x = _mm_aesenc_si128(x, rk[r]);
+    }
+
+    // 5. 最后一轮 (不包含 MixColumn)
+    // _mm_aesenclast_si128 等同于：SubBytes -> ShiftRows -> AddRoundKey
+    x = _mm_aesenclast_si128(x, rk[ROUND]);
+
+    // 6. 输出密文
+    _mm_storeu_si128((__m128i*)C, x);
 }
 
