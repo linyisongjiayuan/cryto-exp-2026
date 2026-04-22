@@ -1,14 +1,23 @@
 #include<iostream>
 #include<iomanip>
-#include<iostream>
-#include<wmmintrin.h>
 #include<cstring>
+#if defined(__x86_64__) && (defined(__AES__) || defined(__SSE__))
+#include<wmmintrin.h>
+#endif
 #include"aes.h"
 
 using namespace std;
 
 word8 log_table[256];
 word8 exp_table[512];
+
+word32 T0[256];
+word32 T5[256];
+word32 T10[256];
+word32 T15[256];
+
+// using word8 = unsigned char;
+// typedef unsigned char word8;
 
 
 word8 Sbox[256] = {
@@ -64,6 +73,11 @@ void SubByte( word8 X[16] )
  * 2  6  10 14
  * 3  7  11 15 
 */
+
+///b7 b6 b5 .... b0 >> 7 = b7 & 0 0 0 0 ... 1 
+
+//b7 b6 b5 .... b0 >> 6 = b7 b6 & 0b01 = b6 
+
 void ShiftRow( word8 X[16] )
 {
     word8 temp[16];
@@ -88,19 +102,114 @@ void ShiftRow( word8 X[16] )
 
 word8 xtime( word8 x )
 {
+    if ( x >> 7 & 1 )
+        return ( ( x << 1 ) ^ 0x11b ) & 0xff; 
+    else
+        return x << 1; 
+
     return 0;
 }
 
-word8 mul( word8 x, word8 y )
+word8 mul( word8 a, word8 b )
 {
-    return 0;
+    int A[8] = { a };
+    for ( int i = 1; i < 8; i++ )
+        A[i] = xtime( A[i- 1] );
+
+    word8 res= 0;
+    for ( int i = 0; i < 8; i++ )
+        if ( b >> i & 1 )
+            res ^= A[i];
+    return res;
 }
 
 
 word8 mul2( word8 x, word8 y ) 
 {
-    return 0;
+    if ( x == 0 || y == 0 )
+        return 0;
+    else
+    {
+        return exp_table[ log_table[ x ] + log_table[ y ] ];
+    }
 }
+
+// initialize T0, T5, T10, T15
+void initT ()
+{
+    // T0
+    for ( word32 x = 0; x < 256; x++ )
+    {
+        word8 y = Sbox[x];
+        T0[x] =  ( static_cast<word32> ( mul(2, y) ) << 24 ) ^ 
+                 (  y << 16 ) ^ 
+                 (  y << 8 ) ^ 
+                 ( static_cast<word32> ( mul(3, y) ) << 0 ); 
+    }
+    //T5
+
+    for ( word32 x = 0; x < 256; x++ )
+    {
+        word8 y = Sbox[x];
+        T5[x] =  
+            ( static_cast<word32> ( mul(3, y) ) << 24 ) ^ 
+            ( static_cast<word32> ( mul(2, y) ) << 16 ) ^ 
+                 (  y << 8 ) ^ 
+                 (  y << 0 );
+    }
+
+    //T10
+    for ( word32 x = 0; x < 256; x++ )
+    {
+        word8 y = Sbox[x];
+        T10[x] =  
+            (  y << 24 ) ^
+            ( static_cast<word32> ( mul(3, y) ) << 16 ) ^ 
+            ( static_cast<word32> ( mul(2, y) ) << 8 ) ^ 
+                 (  y << 0 );
+    }
+
+    //T15   
+    for ( word32 x = 0; x < 256; x++ )
+    {
+        word8 y = Sbox[x];
+        T15[x] =  
+            (  y << 24 ) ^
+            (  y << 16 ) ^
+            ( static_cast<word32> ( mul(3, y) ) << 8 ) ^ 
+            ( static_cast<word32> ( mul(2, y) ) << 0 ); 
+    }
+
+}
+
+
+//
+void superbox ( word8 SS[16] )
+{
+    word8 S[16]  = { 0 };
+    memcpy( S, SS, 16 );
+
+    // S[0], S[5], S[10], S[15]
+    word32 col0 = T0[ S[0] ] ^ T5[ S[5] ] ^ T10[ S[10] ] ^ T15[ S[15] ];
+    for ( int i = 0; i < 4; i++ )
+        SS[i] = col0 >> (24 - i * 8) & 0xff;
+
+    word32 col1 = T0[ S[4] ] ^ T5[ S[9] ] ^ T10[ S[14] ] ^ T15[ S[3] ];
+
+    for ( int i = 0; i < 4; i++ )
+        SS[4+i] = col1 >> (24 - i * 8) & 0xff;
+
+    word32 col2 = T0[ S[8] ] ^ T5[ S[13] ] ^ T10[ S[2] ] ^ T15[ S[7] ];
+
+    for ( int i = 0; i < 4; i++ )
+        SS[8+i] = col2 >> (24 - i * 8) & 0xff;
+
+    word32 col3 = T0[ S[12] ] ^ T5[ S[1] ] ^ T10[ S[6] ] ^ T15[ S[11] ];
+
+    for ( int i = 0; i < 4; i++ )
+        SS[12+i] = col3 >> (24 - i * 8) & 0xff;
+}
+
 
 void MixColumn( word8 X[16] )
 {
@@ -150,6 +259,7 @@ void AddRoundKey( word8 X[16], word8 K[16] )
 {
     for ( int i = 0; i < 16; i++ )
         X[i] ^= K[i];
+    //X[i]= X[i] ^ K[i];
 }
 
 void KeyExpansion( word8 k[16], word8 rk[][16] )
@@ -185,23 +295,56 @@ void AES_Encrypt( word8 P[16], word8 K[16] )
 
     // whitening key
     AddRoundKey( P, RK[0] );
-
     // middle ROUND - 1 rounds
-    for ( int r = 0; r < ROUND - 1; r++ )
+    for ( int r = 1; r <= ROUND; r++ )
     {
         SubByte( P );
-
         ShiftRow( P );
-
         MixColumn( P );
-
-        AddRoundKey( P, RK[r+1] );
+        AddRoundKey( P, RK[r] );
     }
 
     // last round
     SubByte( P );
     ShiftRow( P );
     AddRoundKey( P, RK[ROUND] );
+}
+
+void AES_Encrypt_Full_superbox_rounds( word8 P[16], word8 K[16], int rounds )
+{
+    word8 RK[ROUND+1][16];
+
+    KeyExpansion( K, RK );
+
+    // whitening key
+    AddRoundKey( P, RK[0] );
+    // middle ROUND - 1 rounds
+    for ( int r = 1; r <= rounds; r++ )
+    {
+        superbox( P );
+        AddRoundKey( P, RK[r] );
+    }
+}
+
+void AES_Encrypt_noMC_superbox_rounds( word8 P[16], word8 K[16], int rounds )
+{
+    word8 RK[ROUND+1][16];
+
+    KeyExpansion( K, RK );
+
+    // whitening key
+    AddRoundKey( P, RK[0] );
+    // middle ROUND - 1 rounds
+    for ( int r = 1; r <= rounds - 1; r++ )
+    {
+        superbox( P );
+        AddRoundKey( P, RK[r] );
+    }
+
+    // last round
+    SubByte( P );
+    ShiftRow( P );
+    AddRoundKey( P, RK[rounds] );
 }
 
 void AES_Encrypt_logexp( word8 P[16], word8 K[16] )
@@ -233,36 +376,85 @@ void AES_Encrypt_logexp( word8 P[16], word8 K[16] )
 
 void initialize_log_exp_tables()
 {
-    ;
+    word8 g = 3;
+
+    // exp table
+    //word8 exp_table[512] = { 0 }; 
+    for ( int d = 0; d < 512; d++ )
+    {
+        word8 product = 1;
+        for ( int j = 0; j < d; j++ )
+            product = mul( g, product );
+
+        exp_table[d] = product; // g^d
+    }
+
+    // log table
+    for ( int x = 0; x < 256; x++ )
+    {
+        if ( x == 0 )
+            log_table[x] = 0;
+        else
+        {
+            for ( int i = 0; i < 255; i++ )
+                if ( exp_table[i] == x )
+                    log_table[x] = i; // x = g^i
+        }
+    }
 }
 
-void AES_Encrypt_NI( word8 P[16], word8 RK[ROUND+1][16], word8 C[16] )
+void AES_Encrypt_Full_Rounds(word8 P[16], word8 K[16], int rounds)
 {
-    __m128i x; // 数据块 (State)
-    __m128i rk[ROUND + 1]; // 轮密钥 (Round Keys)
-                           //
-    for ( int i = 0; i < ROUND+1; i++ )
+    word8 RK[11][16];
+
+    KeyExpansion(K, RK);
+
+    AddRoundKey(P, RK[0]);
+    
+    for (int r = 1; r <= rounds; r++)
+    {
+        SubByte(P);
+        ShiftRow(P);
+        MixColumn(P);
+        AddRoundKey(P, RK[r]);
+    }
+}
+
+#if defined(__x86_64__) && defined(__AES__)
+#define AES_NI_AVAILABLE 1
+#else
+#define AES_NI_AVAILABLE 0
+#endif
+
+#if AES_NI_AVAILABLE
+__attribute__((target("aes")))
+#endif
+void AES_Encrypt_NI_rounds( word8 P[16], word8 K[16], int rounds )
+{
+#if AES_NI_AVAILABLE
+    __m128i x;
+    __m128i rk[ROUND+1];
+    word8 RK[ROUND+1][16];
+                            
+    KeyExpansion( K, RK );
+                            
+    for ( int i = 0; i <= ROUND; i++ )
         rk[i] = _mm_loadu_si128 ( (__m128i*) RK[i] ); 
 
-    // 1. 初始化：将输入明文 P 加载到 XMM 寄存器
     x = _mm_loadu_si128((__m128i*)P);
 
-    // 3. 初始轮密钥加 (Whitening Key)
     x = _mm_xor_si128(x, rk[0]);
 
-    // 4. 中间轮次 (AES-NI 将 SubBytes, ShiftRow, MixColumn 合并为一条指令)
-    // 范围是 1 到 ROUND-1
-    for ( int r = 1; r < ROUND; r++ )
+    for ( int r = 1; r < rounds; r++ )
     {
-        // _mm_aesenc_si128 等同于：SubBytes -> ShiftRows -> MixColumns -> AddRoundKey
         x = _mm_aesenc_si128(x, rk[r]);
     }
 
-    // 5. 最后一轮 (不包含 MixColumn)
-    // _mm_aesenclast_si128 等同于：SubBytes -> ShiftRows -> AddRoundKey
-    x = _mm_aesenclast_si128(x, rk[ROUND]);
+    if (rounds >= 1)
+        x = _mm_aesenclast_si128(x, rk[rounds]);
 
-    // 6. 输出密文
-    _mm_storeu_si128((__m128i*)C, x);
+    _mm_storeu_si128((__m128i*)P, x);
+#else
+    AES_Encrypt_Full_superbox_rounds(P, K, rounds);
+#endif
 }
-

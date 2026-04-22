@@ -42,10 +42,16 @@ inline void printA( word8 X[16] )
 }
 
 void AES_Encrypt( word8 P[16], word8 K[16] );
+void AES_Decrypt( word8 C[16], word8 K[16] );
 void initialize_log_exp_tables();
 void AES_Encrypt_logexp( word8 P[16], word8 K[16] );
 void AES_Encrypt_NI( word8 P[16], word8 RK[ROUND+1][16], word8 C[16] );
 void KeyExpansion( word8 k[16], word8 rk[][16] );
-
-
+void AES_Tbox_Encypt( word8 P[16], word8 K[16] );
+void AES_Tbox_Decrypt( word8 C[16], word8 K[16] );
+void generate_T_table();
+void generate_Inv_T_tables();
+void AES_Tbox_Encrypt_rk(word8 P[16], word8 RK[ROUND+1][16]);
+void AES_Tbox_Decrypt_rk(word8 C[16], word8 RK[ROUND+1][16]);
+void InvmixColumn(word8 X[16]);
 #endif
